@@ -13,9 +13,12 @@ import com.zcib.reggie.service.SetmealService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -37,46 +40,54 @@ public class SetmealController {
     @Autowired
     private DishService dishService;
 
+    @Autowired
+    private RedisTemplate redisTemplate;
+
 
     /**
      * 新增套餐
+     *
      * @param setmealDto
      * @return
      */
     @PostMapping
-    public R<String> save(@RequestBody SetmealDto setmealDto){
-        log.info("套餐信息：{}",setmealDto);
+    public R<String> save(@RequestBody SetmealDto setmealDto) {
+        log.info("套餐信息：{}", setmealDto);
         setmealService.saveWithDish(setmealDto);
+        //清理某个分类下面的套餐缓存数据
+        String key = "dish_" + setmealDto.getCategoryId() + "_" + setmealDto.getStatus();//动态构造key
+        redisTemplate.delete(key);
         return R.success("新增套餐成功");
     }
 
     /**
      * 套餐分页查询
+     *
      * @param page
      * @param pageSize
      * @param name
      * @return
      */
     @GetMapping("/page")
-    public R<Page> page(int page,int pageSize,String name){
+    public R<Page> page(int page, int pageSize, String name) {
         //构造分页构造器
         Page<Setmeal> pageInfo = new Page<>(page, pageSize);
         Page<SetmealDto> setmealDtoPage = new Page<>();
         LambdaQueryWrapper<Setmeal> queryWrapper = new LambdaQueryWrapper<>();
         //添加过滤条件
-        queryWrapper.like(name!=null,Setmeal::getName,name);
+        queryWrapper.like(name != null, Setmeal::getName, name);
         //添加排序条件
         queryWrapper.orderByDesc(Setmeal::getUpdateTime);
 
-        setmealService.page(pageInfo,queryWrapper);
+        setmealService.page(pageInfo, queryWrapper);
         //对象拷贝
-        BeanUtils.copyProperties(pageInfo,setmealDtoPage,"records");
+        BeanUtils.copyProperties(pageInfo, setmealDtoPage, "records");
         List<Setmeal> records = pageInfo.getRecords();
 
         List<SetmealDto> list = records.stream().map((item) -> {
             SetmealDto setmealDto = new SetmealDto();
 
-            BeanUtils.copyProperties(item,setmealDto);
+            BeanUtils.copyProperties(item, setmealDto);
 
             Long categoryId = item.getCategoryId();//分类id
             Category category = categoryService.getById(categoryId);//根据id查询分类对象
@@ -92,7 +103,7 @@ public class SetmealController {
         setmealDtoPage.setRecords(list);
 
 
-        return  R.success(setmealDtoPage);
+        return R.success(setmealDtoPage);
     }
 
 
@@ -108,6 +119,9 @@ public class SetmealController {
         LambdaQueryWrapper<SetmealDish> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.in(SetmealDish::getDishId, ids);
         setmealDishService.remove(queryWrapper);
+        //清理所有套餐缓存数据
+        Set key = redisTemplate.keys("dish_*");
+        redisTemplate.delete(key);
         return R.success("套餐删除成功");
     }
 
@@ -121,6 +135,9 @@ public class SetmealController {
     @PostMapping("/status/{status}")
     public R<String> status(@PathVariable("status") int status, @RequestParam List<Long> ids) {
         setmealService.statusByIds(status, ids);
+        //清理所有套餐缓存数据
+        Set key = redisTemplate.keys("dish_*");
+        redisTemplate.delete(key);
         return R.success("售卖状态修改成功");
     }
 
@@ -136,34 +153,50 @@ public class SetmealController {
         SetmealDto byIdWithDish = setmealService.getByIdWithDish(id);
         return R.success(byIdWithDish);
     }
+
     /**
      * 修改套餐
+     *
      * @param setmealDto
      * @return
      */
     @PutMapping
-    public R<String> update(@RequestBody SetmealDto setmealDto){
+    public R<String> update(@RequestBody SetmealDto setmealDto) {
         setmealService.updateWithDish(setmealDto);
+        //清理所有套餐缓存数据
+        Set key = redisTemplate.keys("dish_*");
+        redisTemplate.delete(key);
         return R.success("修改套餐成功");
     }
 
     /**
      * 根据条件查询对应的菜品
+     *
      * @param setmeal
      * @return
      */
     @GetMapping("/list")
-    public R<List<Setmeal>> list(Setmeal setmeal){
+    public R<List<Setmeal>> list(Setmeal setmeal) {
+        List<Setmeal> list;
+        String key = "dish_" + setmeal.getCategoryId() + "_" + setmeal.getStatus();//动态构造key
+        //先从redis中获取缓存数据
+        list = (List<Setmeal>) redisTemplate.opsForValue().get(key);
+        if (list != null) {
+            //如果存在，直接返回，无需查询数据库
+            return R.success(list);
+        }
         LambdaQueryWrapper<Setmeal> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(setmeal.getCategoryId()!=null ,Setmeal::getCategoryId,setmeal.getCategoryId());
+        queryWrapper.eq(setmeal.getCategoryId() != null, Setmeal::getCategoryId, setmeal.getCategoryId());
 
-        queryWrapper.eq(Setmeal::getStatus,1);
+        queryWrapper.eq(Setmeal::getStatus, 1);
 
         queryWrapper.orderByAsc(Setmeal::getPrice).orderByDesc(Setmeal::getUpdateTime);
 
-        List<Setmeal> list = setmealService.list(queryWrapper);
+        list = setmealService.list(queryWrapper);
+        //如果不存在，需要查询数据库，将查询到的套餐数据缓存到Redis中
+        redisTemplate.opsForValue().set(key, list, 60, TimeUnit.MINUTES);
 
-        return  R.success(list);
+        return R.success(list);
     }
 
 
