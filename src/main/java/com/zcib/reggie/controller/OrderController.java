@@ -1,5 +1,7 @@
 package com.zcib.reggie.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zcib.reggie.common.R;
 import com.zcib.reggie.entity.Orders;
 import com.zcib.reggie.service.OrderService;
@@ -31,5 +33,25 @@ public class OrderController {
         log.info("订单数据：{}", orders);
         orderService.submit(orders);
         return R.success("下单成功");
+    }
+    /**
+     * 用户订单查询
+     * @param page
+     * @param pageSize
+     * @return
+     */
+    @GetMapping("/userPage")
+    public R<Page> page(int page, int pageSize){
+
+        //分页构造器对象
+        Page<Orders> pageInfo = new Page<>(page,pageSize);
+        //构造条件查询对象
+        LambdaQueryWrapper<Orders> queryWrapper = new LambdaQueryWrapper<>();
+
+        //添加排序条件，根据更新时间降序排列
+        queryWrapper.orderByDesc(Orders::getOrderTime);
+        orderService.page(pageInfo,queryWrapper);
+
+        return R.success(pageInfo);
     }
 }
