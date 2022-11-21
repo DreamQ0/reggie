@@ -2,21 +2,24 @@ package com.zcib.reggie.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.zcib.reggie.common.BaseContext;
 import com.zcib.reggie.common.R;
 import com.zcib.reggie.dto.OrdersDto;
 import com.zcib.reggie.dto.SetmealDto;
-import com.zcib.reggie.entity.Category;
-import com.zcib.reggie.entity.Orders;
-import com.zcib.reggie.entity.Setmeal;
+import com.zcib.reggie.entity.*;
 import com.zcib.reggie.service.CategoryService;
+import com.zcib.reggie.service.OrderDetailService;
 import com.zcib.reggie.service.OrderService;
+import com.zcib.reggie.service.ShoppingCartService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +35,11 @@ public class OrderController {
     @Autowired
     private OrderService orderService;
 
+    @Autowired
+    private OrderDetailService orderDetailService;
+
+    @Autowired
+    private ShoppingCartService shoppingCartService;
 
     /**
      * 用户下单
@@ -127,4 +135,46 @@ public class OrderController {
         return R.success("状态修改成功");
     }
 
+    /**
+     * 移动端再来一单
+     * @param map
+     * @return
+     */
+    @PostMapping("/again")
+    public R<String> againSubmit(@RequestBody Map<String,String> map){
+        String ids = map.get("id");
+        long id = Long.parseLong(ids);
+        LambdaQueryWrapper<OrderDetail> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(OrderDetail::getOrderId,id);
+        //获取该订单对应的所有的订单明细表
+        List<OrderDetail> orderDetailList = orderDetailService.list(queryWrapper);
+        //获取用户id
+        Long userId = BaseContext.getCurrentId();
+        List<ShoppingCart> shoppingCartList = orderDetailList.stream().map((item) -> {
+            //把从order表中和order_details表中获取到的数据赋值给这个购物车对象
+            ShoppingCart shoppingCart = new ShoppingCart();
+            shoppingCart.setUserId(userId);
+            shoppingCart.setImage(item.getImage());
+            Long dishId = item.getDishId();
+            Long setmealId = item.getSetmealId();
+            if (dishId != null) {
+                //如果是菜品那就添加菜品的查询条件
+                shoppingCart.setDishId(dishId);
+            } else {
+                //添加到购物车的是套餐
+                shoppingCart.setSetmealId(setmealId);
+            }
+            shoppingCart.setName(item.getName());
+            shoppingCart.setDishFlavor(item.getDishFlavor());
+            shoppingCart.setNumber(item.getNumber());
+            shoppingCart.setAmount(item.getAmount());
+            shoppingCart.setCreateTime(LocalDateTime.now());
+            return shoppingCart;
+        }).collect(Collectors.toList());
+
+        //把携带数据的购物车批量插入购物车表  这个批量保存的方法要使用熟练！！！
+        shoppingCartService.saveBatch(shoppingCartList);
+
+        return R.success("操作成功");
+    }
 }
