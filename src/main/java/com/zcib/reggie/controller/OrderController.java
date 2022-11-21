@@ -41,6 +41,7 @@ public class OrderController {
     @Autowired
     private ShoppingCartService shoppingCartService;
 
+
     /**
      * 用户下单
      *
@@ -54,26 +55,37 @@ public class OrderController {
         return R.success("下单成功");
     }
     /**
-     * 用户订单查询
+     * 移动端用户订单查询
      * @param page
      * @param pageSize
      * @return
      */
     @GetMapping("/userPage")
-    public R<Page> page(int page, int pageSize){
-
-        //分页构造器对象
-        Page<Orders> pageInfo = new Page<>(page,pageSize);
-        //构造条件查询对象
+    public R<Page> page(int page,int pageSize) {
+        Page<Orders> pageInfo = new Page<>(page, pageSize);
+        Page<OrdersDto> ordersDtoPage = new Page<>();
         LambdaQueryWrapper<Orders> queryWrapper = new LambdaQueryWrapper<>();
 
-        //添加排序条件，根据更新时间降序排列
+        queryWrapper.eq(Orders::getUserId, BaseContext.getCurrentId());
         queryWrapper.orderByDesc(Orders::getOrderTime);
-        orderService.page(pageInfo,queryWrapper);
+        orderService.page(pageInfo, queryWrapper);
 
-        return R.success(pageInfo);
+        BeanUtils.copyProperties(pageInfo, ordersDtoPage, "records");
+        List<Orders> records = pageInfo.getRecords();
+        List<OrdersDto> list = records.stream().map((item) -> {
+            OrdersDto ordersDto = new OrdersDto();
+            BeanUtils.copyProperties(item, ordersDto);
+
+            Long id = item.getId();
+            List<OrderDetail> orderDetail = orderDetailService.getByOrderId(id);
+            if (orderDetail != null) {
+                ordersDto.setOrderDetails(orderDetail);
+            }
+            return ordersDto;
+        }).collect(Collectors.toList());
+        ordersDtoPage.setRecords(list);
+        return R.success(ordersDtoPage);
     }
-
     /**
      * 后端查看订单
      * @param page
